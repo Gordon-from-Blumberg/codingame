@@ -1,0 +1,7 @@
+id UP: sets a snakebot's direction to UP (x,y)=(0,-1).
+id DOWN: sets a snakebot's direction to DOWN (x,y)=(0,1).
+id LEFT: sets a snakebot's direction to LEFT (x,y)=(-1,0).
+id RIGHT: sets a snakebot's direction to RIGHT (x,y)=(1,0).
+
+body: a string of colon (:) separated coordinates, each coordinate being the position of a body part with the form "x,y". The first coordinate in the list is the head.
+Example: "0,1:1,1:2,1" is a snakebot with a head at x=0 and y=1 with two more body parts to the right.
