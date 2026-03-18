@@ -8,14 +8,19 @@ class Player {
     static final long firstTurnLimit = toNano(1000, .95f);
     static final long turnLimit = toNano(50, .95f);
     static final int maxTurn = 200;
+    static final float mutationChance = 0.02f;
+    static final int generationSize = 32;
+    static final int moveSequenceSize = 32;
+    static final short[][] generation = new short[generationSize][moveSequenceSize];
+    static final short[] bestMoveSequence = new short[moveSequenceSize];
+    static final float[] fitness = new float[generationSize];
 
     static final char platformChar = '#';
     static final char emptyChar = '.';
     static final char powerSourceChar = '$';
+    static final Random rand = new Random();
 
-    static int enoughScores = 0;
-
-    public static void main(String args[]) {
+    public static void main(String[] args) {
         Scanner in = new Scanner(System.in);
         long start = System.nanoTime();
         int myId = in.nextInt();
@@ -97,7 +102,77 @@ class Player {
     }
 
     static void genetic(State baseState, State state, long expiryTime) {
+        final int snakeCount = baseState.snakeMap.length >> 1;
 
+        // generate first generation
+        for (int i = 0; i < generationSize; ++i) {
+            if (i == 0 && baseState.turn > 1) {
+                System.arraycopy(bestMoveSequence, 1, generation[0], 0, moveSequenceSize - 1);
+                generation[0][moveSequenceSize - 1] = randomMove(snakeCount);
+                continue;
+            }
+
+            for (int j = 0; j < moveSequenceSize; ++j) {
+                generation[i][j] = randomMove(snakeCount);
+            }
+        }
+
+        // simulation
+        while (true) {
+            for (int i = 0; i < generationSize; ++i) {
+                // set state to base for new move sequence
+                state.set(baseState);
+                for (int j = 0; j < moveSequenceSize; ++j) {
+                    final short move = generation[i][j];
+
+                    // set directions
+                    int snakeInd = 0;
+                    for (int s = 0, allSnakeCount = snakeCount << 1; s < allSnakeCount; ++s) {
+                        Snake snake = state.snakeMap[s];
+                        if (snake != null) {
+                            if (snake.mine) {
+                                snake.dir = Direction.ALL[(move >> (2 * snakeInd++)) & 3];
+                            } else if (snake.head != null) {
+                                SnakePart head = snake.head;
+                                for (Direction d : Direction.ALL) {
+                                    char ch = state.get(head.x + d.x, head.y + d.y);
+                                    if (ch == powerSourceChar) {
+                                        snake.dir = d;
+                                        break;
+                                    }
+                                    if (ch == emptyChar) {
+                                        snake.dir = d;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    state.move();
+                }
+
+                // todo calculate fitness
+
+            }
+        }
+    }
+
+    static void setMove(State state, int snakeCount, short move) {
+        int snakeInd = 0;
+        for (int i = 0; snakeInd < snakeCount; ++i) {
+            Snake snake = state.snakeMap[i];
+            if (snake != null && snake.mine) {
+                snake.dir = Direction.ALL[(move >> (2 * snakeInd++)) & 3];
+            }
+        }
+    }
+
+    static short randomMove(int snakeCount) {
+        short move = 0;
+        for (int i = 0; i < snakeCount; ++i) {
+            move |= (rand.nextInt(4) << (i * 2));
+        }
+        return move;
     }
 
     static long toNano(int ms, float coef) {
@@ -107,9 +182,12 @@ class Player {
 
 enum Direction {
     UP(0, -1),
+    RIGHT(1, 0),
     DOWN(0, 1),
     LEFT(-1, 0),
-    RIGHT(1, 0);
+    ;
+
+    static final Direction[] ALL = Direction.values();
 
     final int x;
     final int y;
@@ -117,6 +195,18 @@ enum Direction {
     Direction(int x, int y) {
         this.x = x;
         this.y = y;
+    }
+
+    Direction next() {
+        return ALL[(ordinal() + 1) % 4];
+    }
+
+    Direction prev() {
+        return ALL[(ordinal() + 3) % 4];
+    }
+
+    Direction opposite() {
+        return ALL[(ordinal() + 2) % 4];
     }
 
     char next(char[][] grid, int x, int y) {
@@ -293,6 +383,9 @@ class State {
         for (int i = 0, n = snakeMap.length; i < n; ++i) {
             Snake origSnake = original.snakeMap[i];
             if (origSnake != null) {
+                if (snakeMap[i] == null) {
+                    snakeMap[i] = new Snake(origSnake.id, origSnake.mine);
+                }
                 snakeMap[i].set(origSnake);
             }
         }
@@ -361,6 +454,7 @@ class Snake {
     }
 
     void set(Snake original) {
+        dir = original.dir;
         int sizeDiff = parts.size() - original.parts.size();
         while (sizeDiff > 0) {
             parts.removeLast().free();
