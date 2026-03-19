@@ -14,6 +14,9 @@ class Player {
     static final short[][] generation = new short[generationSize][moveSequenceSize];
     static final short[] bestMoveSequence = new short[moveSequenceSize];
     static final float[] fitness = new float[generationSize];
+    static final float[] probs = new float[generationSize];
+    static final short[][] temp = new short[generationSize][moveSequenceSize];
+    static final float baseFitness = 10f;
 
     static final char platformChar = '#';
     static final char emptyChar = '.';
@@ -104,21 +107,62 @@ class Player {
     static void genetic(State baseState, State state, long expiryTime) {
         final int snakeCount = baseState.snakeMap.length >> 1;
 
-        // generate first generation
-        for (int i = 0; i < generationSize; ++i) {
-            if (i == 0 && baseState.turn > 1) {
-                System.arraycopy(bestMoveSequence, 1, generation[0], 0, moveSequenceSize - 1);
-                generation[0][moveSequenceSize - 1] = randomMove(snakeCount);
-                continue;
-            }
-
-            for (int j = 0; j < moveSequenceSize; ++j) {
-                generation[i][j] = randomMove(snakeCount);
+        int myBaseScore = 0, myBaseSnakeCount = 0;
+        int oppBaseScore = 0, oppBaseSnakeCount = 0;
+        for (Snake snake : baseState.snakeMap) {
+            if (snake.head != null) {
+                if (snake.mine) {
+                    ++myBaseSnakeCount;
+                    myBaseScore += snake.parts.size();
+                } else {
+                    ++oppBaseSnakeCount;
+                    oppBaseScore += snake.parts.size();
+                }
             }
         }
 
-        // simulation
-        while (true) {
+        int generationCount = 0;
+        // simulation loop
+        while (System.nanoTime() < expiryTime) {
+            System.err.println("generation " + generationCount);
+            if (generationCount == 0) {
+                // generate first generation
+                for (int i = 0; i < generationSize; ++i) {
+                    if (i == 0 && baseState.turn > 1) {
+                        System.arraycopy(bestMoveSequence, 1, generation[0], 0, moveSequenceSize - 1);
+                        generation[0][moveSequenceSize - 1] = randomMove(snakeCount);
+                        continue;
+                    }
+
+                    for (int j = 0; j < moveSequenceSize; ++j) {
+                        generation[i][j] = randomMove(snakeCount);
+                    }
+                }
+            } else {
+                // generate new generation by previous
+                for (int i = 0; i < generationSize; ++i) probs[i] = fitness[i] * fitness[i];
+                System.err.println(Arrays.toString(probs));
+                for (int i = 0; i < generationSize; ++i) {
+                    int par1Idx = getRand(probs);
+                    int par2Idx = getRand(probs);
+                    while (par2Idx == par1Idx) par2Idx = getRand(probs);
+
+                    short[] par1 = generation[par1Idx];
+                    short[] par2 = generation[par2Idx];
+                    for (int j = 0; j < moveSequenceSize; ++j) {
+                        temp[i][j] = rand.nextFloat() < mutationChance
+                                ? randomMove(snakeCount)
+                                : rand.nextFloat() < 0.5f ? par1[j] : par2[j];
+                    }
+                }
+
+                for (int i = 0; i < generationSize; ++i) {
+                    System.arraycopy(temp[i], 0, generation[i], 0, moveSequenceSize);
+                }
+            }
+
+            ++generationCount;
+            // simulation
             for (int i = 0; i < generationSize; ++i) {
                 // set state to base for new move sequence
                 state.set(baseState);
@@ -149,12 +193,77 @@ class Player {
                     }
 
                     state.move();
+
+                    if (state.turn == maxTurn)
+                        break;
+
+                    int mySnakeCount = 0, oppSnakeCount = 0;
+                    for (Snake snake : state.snakeMap) {
+                        if (snake.head != null) {
+                            if (snake.mine) ++mySnakeCount;
+                            else ++oppSnakeCount;
+                        }
+                    }
+                    if (mySnakeCount == 0 || oppBaseSnakeCount == 0)
+                        break;
                 }
 
-                // todo calculate fitness
+                int myScore = 0, mySnakeCount = 0;
+                int oppScore = 0, oppSnakeCount = 0;
+                for (Snake snake : state.snakeMap) {
+                    if (snake.head != null) {
+                        if (snake.mine) {
+                            ++mySnakeCount;
+                            myScore += snake.parts.size();
+                        } else {
+                            ++oppSnakeCount;
+                            oppScore += snake.parts.size();
+                        }
+                    }
+                }
+                System.err.println("turn = " + state.turn);
+                System.err.println("score: " + myScore + "/" + oppScore);
 
+                float fit = baseFitness;
+                if (myScore == 0) fit = 0;
+                if (oppSnakeCount == 0) fit *= 10;
+                if (mySnakeCount < myBaseSnakeCount) {
+                    fit *= 1 - 0.12f * (myBaseSnakeCount - mySnakeCount);
+                }
+                if (oppSnakeCount < oppBaseSnakeCount) {
+                    fit *= 1 + 0.5f * (oppBaseSnakeCount - oppSnakeCount);
+                }
+                if (myScore < myBaseScore) {
+                    float k = 1 - 0.05f * (myBaseScore - myScore);
+                    fit *= (k < 0 ? 0 : k);
+                } else if (myScore > myBaseScore) {
+                    fit *= 1 + 0.2f * (myScore - myBaseScore);
+                }
+                if (oppScore < oppBaseScore) {
+                    fit *= 1 + 0.5f * (oppBaseScore - oppScore);
+                }
+                if (myScore > oppScore) {
+                    fit *= 1 + 0.5f * (myScore - oppScore);
+                }
+
+                fitness[i] = fit;
             }
+
+            float bestFit = -1f;
+            int bestFitIdx = 0;
+            for (int i = 0; i < generationSize; ++i) {
+                float f = fitness[i];
+                if (f > bestFit) {
+                    bestFit = f;
+                    bestFitIdx = i;
+                }
+            }
+
+            System.arraycopy(generation[bestFitIdx],0, bestMoveSequence, 0, moveSequenceSize);
         }
+
+        System.err.println("generation = " + generationCount);
+        setMove(baseState, snakeCount, bestMoveSequence[0]);
     }
 
     static void setMove(State state, int snakeCount, short move) {
@@ -177,6 +286,20 @@ class Player {
 
     static long toNano(int ms, float coef) {
         return (long) (coef * 1_000_000 * ms);
+    }
+
+    static int getRand(float[] probs) {
+        float s = 0;
+        for (int i = 0, n = probs.length; i < n; ++i) s += probs[i];
+        float p = rand.nextFloat() * s;
+        s = 0;
+        for (int i = 0, n = probs.length; i < n; ++i) {
+            s += probs[i];
+            if (p < s) {
+                return i;
+            }
+        }
+        return probs.length - 1;
     }
 }
 
@@ -373,6 +496,8 @@ class State {
                 set(part.x, part.y, part == snake.head ? Character.toUpperCase(snakeChar) : snakeChar);
             }
         }
+
+        ++turn;
     }
 
     void set(State original) {
@@ -407,6 +532,22 @@ class State {
         if (x >= 0 && x < grid.length && y >= 0 && y < grid[0].length) {
             grid[x][y] = Character.toUpperCase(grid[x][y]);
         }
+    }
+
+    int myScore() {
+        int score = 0;
+        for (Snake snake : snakeMap) {
+            if (snake.mine) score += snake.parts.size();
+        }
+        return score;
+    }
+
+    int oppScore() {
+        int score = 0;
+        for (Snake snake : snakeMap) {
+            if (!snake.mine) score += snake.parts.size();
+        }
+        return score;
     }
 
     static int packCoords(int x, int y) {
