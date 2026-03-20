@@ -8,7 +8,7 @@ class Player {
     static final long firstTurnLimit = toNano(1000, .95f);
     static final long turnLimit = toNano(50, .95f);
     static final int maxTurn = 200;
-    static final float mutationChance = 0.02f;
+    static final float mutationChance = 0.03f;
     static final int generationSize = 32;
     static final int moveSequenceSize = 32;
     static final short[][] generation = new short[generationSize][moveSequenceSize];
@@ -16,17 +16,17 @@ class Player {
     static final float[] fitness = new float[generationSize];
     static final float[] probs = new float[generationSize];
     static final short[][] temp = new short[generationSize][moveSequenceSize];
-    static final float baseFitness = 10f;
+    static final float baseFitness = 1f;
 
     static final char platformChar = '#';
     static final char emptyChar = '.';
     static final char powerSourceChar = '$';
-    static final Random rand = new Random();
+    static final Random rand = new Random(1234567810405L);
 
     public static void main(String[] args) {
         Scanner in = new Scanner(System.in);
-        long start = System.nanoTime();
         int myId = in.nextInt();
+        long start = System.nanoTime();
         int width = in.nextInt();
         int height = in.nextInt();
 
@@ -64,7 +64,9 @@ class Player {
             baseState.newTurn(baseGrid);
 
             int powerSourceCount = in.nextInt();
+            long s = System.nanoTime();
             long expiryTime = baseState.turn == 1 ? start + firstTurnLimit : System.nanoTime() + turnLimit;
+
             for (int i = 0; i < powerSourceCount; i++) {
                 int x = in.nextInt();
                 int y = in.nextInt();
@@ -82,16 +84,8 @@ class Player {
 
             baseState.updateSnakes(snakeBodies);
 
-//            if (baseState.turn == 1) {
-//                int length = 0;
-//                for (Snake snake : baseState.snakeMap) {
-//                    if (snake.mine) length += snake.parts.size();
-//                }
-//                enoughScores = length + powerSourceCount / 2 + 1;
-//            }
-
             genetic(baseState, state, expiryTime);
-
+            s = System.nanoTime();
             for (Snake snake : baseState.snakeMap) {
                 if (snake != null && snake.mine) {
                     System.out.print(snake.id);
@@ -101,11 +95,14 @@ class Player {
                 }
             }
             System.out.println();
+            System.err.println("writing took " + (System.nanoTime() - s));
         }
     }
 
     static void genetic(State baseState, State state, long expiryTime) {
+        // count of snakes for one player
         final int snakeCount = baseState.snakeMap.length >> 1;
+        final float loseSnakeCoef = 0.98f / snakeCount;
 
         int myBaseScore = 0, myBaseSnakeCount = 0;
         int oppBaseScore = 0, oppBaseSnakeCount = 0;
@@ -120,12 +117,14 @@ class Player {
                 }
             }
         }
+        final float loseScoreCoef = 0.98f / myBaseScore;
 
-        int generationCount = 0;
+        int generationNumber = 0;
         // simulation loop
-        while (System.nanoTime() < expiryTime) {
-            System.err.println("generation " + generationCount);
-            if (generationCount == 0) {
+//        while (System.nanoTime() < expiryTime) {
+        while (generationNumber < 600) {
+            long genTime = System.nanoTime();
+            if (generationNumber == 0) {
                 // generate first generation
                 for (int i = 0; i < generationSize; ++i) {
                     if (i == 0 && baseState.turn > 1) {
@@ -141,7 +140,6 @@ class Player {
             } else {
                 // generate new generation by previous
                 for (int i = 0; i < generationSize; ++i) probs[i] = fitness[i] * fitness[i];
-                System.err.println(Arrays.toString(probs));
                 for (int i = 0; i < generationSize; ++i) {
                     int par1Idx = getRand(probs);
                     int par2Idx = getRand(probs);
@@ -160,8 +158,9 @@ class Player {
                     System.arraycopy(temp[i], 0, generation[i], 0, moveSequenceSize);
                 }
             }
+//            System.err.println("generate new generation took " + (System.nanoTime() - genTime));
 
-            ++generationCount;
+            ++generationNumber;
             // simulation
             for (int i = 0; i < generationSize; ++i) {
                 // set state to base for new move sequence
@@ -194,17 +193,24 @@ class Player {
 
                     state.move();
 
-                    if (state.turn == maxTurn)
-                        break;
-
-                    int mySnakeCount = 0, oppSnakeCount = 0;
+                    int mySnakeCount = 0, oppSnakeCount = 0, myScore = 0;
                     for (Snake snake : state.snakeMap) {
                         if (snake.head != null) {
-                            if (snake.mine) ++mySnakeCount;
-                            else ++oppSnakeCount;
+                            if (snake.mine) {
+                                ++mySnakeCount;
+                                myScore += snake.parts.size();
+                            }
+                            else {
+                                ++oppSnakeCount;
+                            }
                         }
                     }
-                    if (mySnakeCount == 0 || oppBaseSnakeCount == 0)
+
+                    state.mySnakeCountSum += mySnakeCount;
+                    if (myScore > state.myMaxScore) state.myMaxScore = myScore;
+
+                    if (mySnakeCount == 0 || oppSnakeCount == 0
+                            || state.turn == maxTurn || state.powerSources.isEmpty())
                         break;
                 }
 
@@ -221,23 +227,20 @@ class Player {
                         }
                     }
                 }
-                System.err.println("turn = " + state.turn);
-                System.err.println("score: " + myScore + "/" + oppScore);
 
                 float fit = baseFitness;
-                if (myScore == 0) fit = 0;
                 if (oppSnakeCount == 0) fit *= 10;
                 if (mySnakeCount < myBaseSnakeCount) {
-                    fit *= 1 - 0.12f * (myBaseSnakeCount - mySnakeCount);
+                    fit *= 1 - loseSnakeCoef * (myBaseSnakeCount - mySnakeCount);
                 }
                 if (oppSnakeCount < oppBaseSnakeCount) {
                     fit *= 1 + 0.5f * (oppBaseSnakeCount - oppSnakeCount);
                 }
                 if (myScore < myBaseScore) {
-                    float k = 1 - 0.05f * (myBaseScore - myScore);
-                    fit *= (k < 0 ? 0 : k);
+                    fit *= 1 - loseScoreCoef * (myBaseScore - myScore);
                 } else if (myScore > myBaseScore) {
-                    fit *= 1 + 0.2f * (myScore - myBaseScore);
+                    float k = 1 + 0.2f * (myScore - myBaseScore);
+                    fit *= k * k;
                 }
                 if (oppScore < oppBaseScore) {
                     fit *= 1 + 0.5f * (oppBaseScore - oppScore);
@@ -245,10 +248,13 @@ class Player {
                 if (myScore > oppScore) {
                     fit *= 1 + 0.5f * (myScore - oppScore);
                 }
+                fit *= 1 + 0.02f * state.myMaxScore;
+                fit *= 1 + 0.01f * state.mySnakeCountSum;
 
                 fitness[i] = fit;
             }
 
+//            System.err.println("simulation took " + (System.nanoTime() - genTime));
             float bestFit = -1f;
             int bestFitIdx = 0;
             for (int i = 0; i < generationSize; ++i) {
@@ -260,10 +266,13 @@ class Player {
             }
 
             System.arraycopy(generation[bestFitIdx],0, bestMoveSequence, 0, moveSequenceSize);
+            System.err.println("generation #" + generationNumber + "; best fit = " + bestFit + "; time = " + (System.nanoTime() - genTime));
         }
 
-        System.err.println("generation = " + generationCount);
+        long s = System.nanoTime();
+        System.err.println("generation = " + generationNumber);
         setMove(baseState, snakeCount, bestMoveSequence[0]);
+        System.err.println("setMove() took " + (System.nanoTime() - s));
     }
 
     static void setMove(State state, int snakeCount, short move) {
@@ -334,9 +343,9 @@ enum Direction {
 
     char next(char[][] grid, int x, int y) {
         int nextX = x + this.x;
-        if (nextX < 0 || nextX == grid.length) return Player.emptyChar;
+        if (nextX < 0 || nextX >= grid.length) return Player.emptyChar;
         int nextY = y + this.y;
-        if (nextY < 0 || nextY == grid[0].length) return Player.emptyChar;
+        if (nextY < 0 || nextY >= grid[0].length) return Player.emptyChar;
         return grid[nextX][nextY];
     }
 }
@@ -349,6 +358,8 @@ class State {
     final Snake[] snakeMap;
     final Set<Integer> moveTargets;
     final Set<Integer> powerSources = new HashSet<>();
+    int mySnakeCountSum;
+    int myMaxScore;
 
     State(int width, int height, int snakeCount, boolean base) {
         this.grid = new char[width][height];
@@ -416,9 +427,9 @@ class State {
                 newHead.set(nextX, nextY);
                 snake.parts.addFirst(newHead);
                 char ch = snake.idToChar();
-                set(snake.head.x, snake.head.y, Character.toLowerCase(ch));
-                snake.head = newHead;
                 set(snake.head.x, snake.head.y, ch);
+                snake.head = newHead;
+                set(snake.head.x, snake.head.y, Character.toUpperCase(ch));
                 if (target == Player.powerSourceChar) {
                     powerSources.remove(packCoords(nextX, nextY));
                 }
@@ -434,21 +445,6 @@ class State {
                 SnakePart tail = snake.parts.removeLast();
                 set(tail.x, tail.y, Player.emptyChar);
                 tail.free();
-
-                int minX = snake.head.x;
-                int maxX = minX;
-                for (SnakePart part : snake.parts) {
-                    if (part.x < minX) minX = part.x;
-                    if (part.x > maxX) maxX = part.x;
-                }
-
-                // is snake length < 3 or snake out of screen
-                if (snake.parts.size() < 3 || maxX < 0 || minX >= width) {
-                    for (SnakePart part : snake.parts) {
-                        set(part.x, part.y, Player.emptyChar);
-                    }
-                    snake.reset();
-                }
             }
 
             snake.grow = false;
@@ -462,7 +458,27 @@ class State {
             set(snake.head.x, snake.head.y, Player.emptyChar);
             snake.parts.removeFirst().free();
             snake.head = snake.parts.getFirst();
-            grid[snake.head.x][snake.head.y] = Character.toUpperCase(grid[snake.head.x][snake.head.y]);
+            toUpperCase(snake.head.x, snake.head.y);
+        }
+
+        // check for out of screen and minimum length
+        for (Snake snake : snakeMap) {
+            if (snake == null || snake.head == null) continue;
+
+            int minX = snake.head.x;
+            int maxX = minX;
+            for (SnakePart part : snake.parts) {
+                if (part.x < minX) minX = part.x;
+                if (part.x > maxX) maxX = part.x;
+            }
+
+            // is snake length < 3 or snake out of screen
+            if (snake.parts.size() < 3 || maxX < 0 || minX >= width) {
+                for (SnakePart part : snake.parts) {
+                    set(part.x, part.y, Player.emptyChar);
+                }
+                snake.reset();
+            }
         }
 
         // move snakes down due to gravity
@@ -473,7 +489,7 @@ class State {
             int minFall = grid[0].length;
             for (SnakePart part : snake.parts) {
                 int x = part.x;
-                if (x < 0 || x >= grid.length) continue;
+                if (x < 0 || x >= width) continue;
 
                 int fall = 0;
                 // find
@@ -490,8 +506,12 @@ class State {
 
             if (minFall == 0) continue;
 
+            // first remove
             for (SnakePart part : snake.parts) {
                 set(part.x, part.y, Player.emptyChar);
+            }
+            // then render
+            for (SnakePart part : snake.parts) {
                 part.y += minFall;
                 set(part.x, part.y, part == snake.head ? Character.toUpperCase(snakeChar) : snakeChar);
             }
@@ -505,6 +525,8 @@ class State {
         for (int i = 0, w = grid.length, h = grid[0].length; i < w; ++i) {
             System.arraycopy(original.grid[i], 0, grid[i], 0, h);
         }
+        mySnakeCountSum = 0;
+        myMaxScore = 0;
         for (int i = 0, n = snakeMap.length; i < n; ++i) {
             Snake origSnake = original.snakeMap[i];
             if (origSnake != null) {
@@ -512,6 +534,9 @@ class State {
                     snakeMap[i] = new Snake(origSnake.id, origSnake.mine);
                 }
                 snakeMap[i].set(origSnake);
+                if (origSnake.mine) {
+                    myMaxScore += origSnake.parts.size();
+                }
             }
         }
         powerSources.clear();
@@ -534,20 +559,15 @@ class State {
         }
     }
 
-    int myScore() {
-        int score = 0;
-        for (Snake snake : snakeMap) {
-            if (snake.mine) score += snake.parts.size();
+    String printGrid() {
+        StringBuilder sb = new StringBuilder();
+        for (int y = 0; y < grid[0].length; ++y) {
+            for (int x = 0; x < grid.length; ++x) {
+                sb.append(grid[x][y]);
+            }
+            sb.append('\n');
         }
-        return score;
-    }
-
-    int oppScore() {
-        int score = 0;
-        for (Snake snake : snakeMap) {
-            if (!snake.mine) score += snake.parts.size();
-        }
-        return score;
+        return sb.toString();
     }
 
     static int packCoords(int x, int y) {
@@ -595,6 +615,8 @@ class Snake {
     }
 
     void set(Snake original) {
+        if (original.head == null)
+            return;
         dir = original.dir;
         int sizeDiff = parts.size() - original.parts.size();
         while (sizeDiff > 0) {
