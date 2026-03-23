@@ -34,9 +34,17 @@ public class Test_2026_0 {
             baseState.updateSnakes(br.lines().toArray(String[]::new));
         }
 
-
-        Player.genetic(baseState, state, System.nanoTime() + Player.firstTurnLimit);
+        long start = System.nanoTime();
+        Player.genetic(baseState, state, System.nanoTime() + 1000 * 1_000_000L);
+        Player.geneticTime = System.nanoTime() - start;
         System.err.println(baseState.printGrid());
+
+        System.err.println(Player.geneticTime + "\t- " + ((float) Player.geneticTime / Player.geneticTime) + "\t- genetic");
+        System.err.println(Player.generationTime + "\t- " + ((float) Player.generationTime / Player.geneticTime) + "\t- generation");
+        System.err.println(Player.simulationTime + "\t- " + ((float) Player.simulationTime / Player.geneticTime) + "\t- simulation");
+        System.err.println(Player.moveTime + "\t- " + ((float) Player.moveTime / Player.geneticTime) + "\t- move");
+        System.err.println(Player.setStateTime + "\t- " + ((float) Player.setStateTime / Player.geneticTime) + "\t- setState");
+        System.err.println(Player.setDirsTime + "\t- " + ((float) Player.setDirsTime / Player.geneticTime) + "\t- setDirections");
 
         state.set(baseState);
         for (int i = 0; i < Player.moveSequenceSize; ++i) {
@@ -45,20 +53,20 @@ public class Test_2026_0 {
             int snakeInd = 0;
             for (int s = 0, allSnakeCount = 8; s < allSnakeCount; ++s) {
                 Snake snake = state.snakeMap[s];
-                if (snake != null) {
-                    if (snake.mine) {
-                        snake.dir = Direction.ALL[(move >> (2 * snakeInd++)) & 3];
-                    } else if (snake.head != null) {
-                        SnakePart head = snake.head;
-                        for (Direction d : Direction.ALL) {
-                            char ch = state.get(head.x + d.x, head.y + d.y);
-                            if (ch == Player.powerSourceChar) {
-                                snake.dir = d;
-                                break;
-                            }
-                            if (ch == Player.emptyChar) {
-                                snake.dir = d;
-                            }
+                if (snake.mine) {
+                    snake.dir = Direction.ALL[(move >> (2 * snakeInd++)) & 3];
+                } else if (snake.head != null) {
+                    SnakePart head = snake.head;
+                    for (Direction d : Direction.ALL) {
+                        int newX = head.x + d.x;
+                        if (newX < 0 || newX >= 34) continue;
+                        char ch = state.get(newX, head.y + d.y);
+                        if (ch == Player.powerSourceChar) {
+                            snake.dir = d;
+                            break;
+                        }
+                        if (ch == Player.emptyChar) {
+                            snake.dir = d;
                         }
                     }
                 }
@@ -66,7 +74,19 @@ public class Test_2026_0 {
 
             state.move();
 
+            System.err.println("Turn #" + state.turn);
             System.err.println(state.printGrid());
+
+            int mySnakeCount = 0, oppSnakeCount = 0;
+            for (Snake snake : state.snakeMap) {
+                if (snake.head != null) {
+                    if (snake.mine) ++mySnakeCount;
+                    else ++oppSnakeCount;
+                }
+            }
+            if (mySnakeCount == 0 || oppSnakeCount == 0
+                    || state.turn == Player.maxTurn || state.powerSources.isEmpty())
+                break;
         }
 
         System.err.println();
